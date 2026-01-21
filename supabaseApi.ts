@@ -1,0 +1,253 @@
+import { supabase } from './supabaseClient';
+import { User, Camp } from './types';
+
+export async function upsertProfile(user: User) {
+  // Profiles table should have id = auth.users.id
+  const { data, error } = await supabase
+    .from('profiles')
+    .upsert({ id: user.id, full_name: user.name, email: user.email }, { onConflict: 'id' })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function fetchProfiles() {
+  const { data, error } = await supabase.from('profiles').select('*');
+  if (error) throw error;
+  return data as Array<any>;
+}
+
+export async function createCamp(camp: Camp) {
+  const { data, error } = await supabase.from('camps').insert(camp).select().single();
+  if (error) throw error;
+  return data as Camp;
+}
+
+export async function updateCamp(camp: Camp) {
+  const { data, error } = await supabase.from('camps').update(camp).eq('id', camp.id).select().single();
+  if (error) throw error;
+  return data as Camp;
+}
+
+export async function fetchCampsForUser(userId: string) {
+  const { data, error } = await supabase
+    .from('camps')
+    .select('*')
+    .contains('members', [userId]);
+  if (error) throw error;
+  return data as Camp[];
+}
+
+export async function createInvitation(inviterId: string, email: string, campId?: string) {
+  const token = Math.random().toString(36).slice(2, 12);
+  // Ensure inviter profile exists to satisfy the foreign key constraint
+  try {
+    await supabase.from('profiles').upsert({ id: inviterId }, { onConflict: 'id' });
+  } catch (e) {
+    // If upsert fails, continue — insert may still fail due to FK and will be handled below
+    console.warn('Failed to upsert inviter profile (continuing):', e);
+  }
+  // If an invitation already exists for this email+camp, return it instead of creating a duplicate
+  if (campId) {
+    const { data: existing } = await supabase
+      .from('invitations')
+      .select('*')
+      .eq('email', email)
+      .eq('camp_id', campId)
+      .maybeSingle();
+    if (existing) {
+      const link = `${window.location.origin}/?invite=${existing.token}&email=${encodeURIComponent(email)}`;
+      return { ...existing, link, emailSent: false, emailError: 'Invite already exists' };
+    }
+  }
+
+  // Ensure camp exists before inserting invitation to satisfy FK constraint
+  if (campId) {
+    try {
+      const { data: campExists } = await supabase.from('camps').select('id').eq('id', campId).maybeSingle();
+      if (!campExists) {
+        // Create a minimal placeholder camp so the FK constraint is satisfied.
+        // Caller should normally create the camp via supabaseApi.createCamp; this is a graceful fallback.
+        const placeholder = {
+          id: campId,
+          name: 'Untitled Camp',
+          festival_name: '',
+          date: new Date().toISOString(),
+          dimensions: { width: 30, height: 30 },
+          members: [],
+          objects: [],
+          shared_packing_list: []
+        };
+        await supabase.from('camps').insert(placeholder).select();
+      }
+    } catch (e) {
+      console.warn('Failed to ensure camp exists before creating invitation', e);
+    }
+  }
+
+  const { data, error } = await supabase
+    .from('invitations')
+    .insert({ inviter_id: inviterId, email, token, accepted: false, camp_id: campId })
+    .select()
+    .single();
+  if (error) throw error;
+  // Return a simple invite link for the app; the app should accept token and email to claim membership.
+  const link = `${window.location.origin}/?invite=${data.token}&email=${encodeURIComponent(email)}`;
+  // Optionally send email via EmailJS (client-side friendly public key)
+  let emailSent = false;
+  let emailError: string | null = null;
+  try {
+    const serviceId = import.meta.env.VITE_EMAILJS_SERVICE_ID as string | undefined;
+    const templateId = import.meta.env.VITE_EMAILJS_TEMPLATE_ID as string | undefined;
+    const userId = import.meta.env.VITE_EMAILJS_USER_ID as string | undefined;
+    if (serviceId && templateId && userId) {
+      const resp = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          service_id: serviceId,
+          template_id: templateId,
+          user_id: userId,
+          template_params: {
+            to_email: email,
+            invite_link: link,
+          }
+        })
+      });
+      if (!resp.ok) {
+        // Try to parse JSON error body, fallback to text
+        const text = await resp.text().catch(() => 'Unknown error');
+        let parsed: any = null;
+        try {
+          parsed = JSON.parse(text);
+        } catch (e) {
+          parsed = null;
+        }
+        if (parsed && (parsed.error || parsed.message)) {
+          emailError = `Email service ${resp.status}: ${parsed.error || parsed.message}`;
+        } else {
+          emailError = `Email service ${resp.status}: ${text}`;
+        }
+        console.error('EmailJS send failed', { status: resp.status, body: emailError });
+      } else {
+        emailSent = true;
+      }
+    }
+  } catch (e: any) {
+    emailError = e?.message || String(e);
+  }
+
+  return { ...data, link, emailSent, emailError };
+}
+
+export async function acceptInvitation(token: string, email: string, userId: string) {
+  const { data: invite, error: findErr } = await supabase
+    .from('invitations')
+    .select('*')
+    .eq('token', token)
+    .eq('email', email)
+    .single();
+  if (findErr) throw findErr;
+
+  // Mark accepted
+  const { data: updated, error: updErr } = await supabase
+    .from('invitations')
+    .update({ accepted: true, accepted_by: userId })
+    .eq('id', invite.id)
+    .select()
+    .single();
+  if (updErr) throw updErr;
+
+  // If invite targeted a camp, add the user to that camp's members array (if not already)
+  if (invite.camp_id) {
+    const { data: campData, error: campErr } = await supabase
+      .from('camps')
+      .select('members')
+      .eq('id', invite.camp_id)
+      .single();
+    if (campErr) {
+      console.warn('Failed to fetch camp for invitation acceptance', campErr);
+      return updated;
+    }
+
+    const members: string[] = campData?.members || [];
+    if (!members.includes(userId)) {
+      const newMembers = [...members, userId];
+      const { error: addErr } = await supabase.from('camps').update({ members: newMembers }).eq('id', invite.camp_id);
+      if (addErr) console.warn('Failed to add invited user to camp members', addErr);
+    }
+  }
+
+  return updated;
+}
+
+export async function fetchPendingInvitationsForInviter(inviterId: string) {
+  const { data, error } = await supabase
+    .from('invitations')
+    .select('*')
+    .eq('inviter_id', inviterId)
+    .eq('accepted', false)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data as Array<any>;
+}
+
+export async function resendInvitation(inviteId: number) {
+  const { data: invite, error: findErr } = await supabase
+    .from('invitations')
+    .select('*')
+    .eq('id', inviteId)
+    .single();
+  if (findErr) throw findErr;
+
+  const link = `${window.location.origin}/?invite=${invite.token}&email=${encodeURIComponent(invite.email)}`;
+  let emailSent = false;
+  let emailError: string | null = null;
+
+  try {
+    const serviceId = import.meta.env.VITE_EMAILJS_SERVICE_ID as string | undefined;
+    const templateId = import.meta.env.VITE_EMAILJS_TEMPLATE_ID as string | undefined;
+    const userId = import.meta.env.VITE_EMAILJS_USER_ID as string | undefined;
+    if (serviceId && templateId && userId) {
+      const resp = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          service_id: serviceId,
+          template_id: templateId,
+          user_id: userId,
+          template_params: { to_email: invite.email, invite_link: link }
+        })
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => 'Unknown error');
+        let parsed: any = null;
+        try { parsed = JSON.parse(text); } catch(e) { parsed = null; }
+        if (parsed && (parsed.error || parsed.message)) {
+          emailError = `Email service ${resp.status}: ${parsed.error || parsed.message}`;
+        } else {
+          emailError = `Email service ${resp.status}: ${text}`;
+        }
+      } else {
+        emailSent = true;
+      }
+    } else {
+      emailError = 'EmailJS not configured';
+    }
+  } catch (e: any) {
+    emailError = e?.message || String(e);
+  }
+
+  return { invite, link, emailSent, emailError };
+}
+
+export default {
+  upsertProfile,
+  fetchProfiles,
+  createCamp,
+  updateCamp,
+  fetchCampsForUser,
+  createInvitation,
+  acceptInvitation,
+};

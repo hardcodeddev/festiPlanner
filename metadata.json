@@ -1,0 +1,7 @@
+{
+  "name": "Festivall - Camp Planner",
+  "description": "A comprehensive festival preparation tool for managing group camps, shared packing lists, personal gear, and 2D layout planning.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
