@@ -76,10 +76,36 @@ const LayoutPlanner: React.FC<LayoutPlannerProps> = ({
     const snappedX = Math.max(0, Math.min(camp.dimensions.width - 0.5, Math.round(relX * 2) / 2));
     const snappedY = Math.max(0, Math.min(camp.dimensions.height - 0.5, Math.round(relY * 2) / 2));
     
+    // Throttle drag updates to avoid flooding parent updates
+    if (!handleDrag.lastTime) handleDrag.lastTime = 0;
+    const now = Date.now();
+    if (now - handleDrag.lastTime < 50) return;
+    handleDrag.lastTime = now;
     updateObject(dragId, { x: snappedX, y: snappedY });
   };
 
+  // @ts-ignore attach a timestamp to the function for simple throttling
+  handleDrag.lastTime = handleDrag.lastTime || 0;
+
   const selectedObject = camp.objects.find(o => o.id === selectedObjectId);
+
+  // Local edit state to avoid cursor jumping when realtime updates replace objects
+  const [localEdit, setLocalEdit] = useState<Partial<CampObject> | null>(null);
+  const editTimer = useRef<number | null>(null);
+
+  // Sync local edit state when selection changes
+  useEffect(() => {
+    if (selectedObject) {
+      setLocalEdit({ ...selectedObject });
+    } else {
+      setLocalEdit(null);
+    }
+    // clear any pending timer when selection changes
+    if (editTimer.current) {
+      window.clearTimeout(editTimer.current);
+      editTimer.current = null;
+    }
+  }, [selectedObject?.id]);
 
   const getIcon = (type: CampObject['type']) => {
     switch(type) {
@@ -133,8 +159,23 @@ const LayoutPlanner: React.FC<LayoutPlannerProps> = ({
                 <input 
                   type="text" 
                   className="w-full px-3 py-1 border rounded-lg text-sm"
-                  value={selectedObject.name}
-                  onChange={e => updateObject(selectedObject.id, { name: e.target.value })}
+                  value={localEdit?.name ?? ''}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setLocalEdit(prev => ({ ...(prev || {}), name: val }));
+                    // debounce updates to parent to avoid rapid re-renders from realtime
+                    if (selectedObject) {
+                      if (editTimer.current) window.clearTimeout(editTimer.current);
+                      // @ts-ignore setTimeout return type
+                      editTimer.current = window.setTimeout(() => {
+                        updateObject(selectedObject.id, { name: val });
+                        editTimer.current = null;
+                      }, 350);
+                    }
+                  }}
+                  onBlur={() => {
+                    if (selectedObject && localEdit) updateObject(selectedObject.id, { name: localEdit.name! });
+                  }}
                 />
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -143,8 +184,22 @@ const LayoutPlanner: React.FC<LayoutPlannerProps> = ({
                   <input 
                     type="number" step="0.5"
                     className="w-full px-3 py-1 border rounded-lg text-sm"
-                    value={selectedObject.width}
-                    onChange={e => updateObject(selectedObject.id, { width: parseFloat(e.target.value) })}
+                    value={localEdit?.width ?? ''}
+                    onChange={e => {
+                      const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                      setLocalEdit(prev => ({ ...(prev || {}), width: val as any }));
+                      if (selectedObject) {
+                        if (editTimer.current) window.clearTimeout(editTimer.current);
+                        // @ts-ignore
+                        editTimer.current = window.setTimeout(() => {
+                          updateObject(selectedObject.id, { width: parseFloat(String(val)) });
+                          editTimer.current = null;
+                        }, 350);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (selectedObject && localEdit) updateObject(selectedObject.id, { width: Number(localEdit.width) });
+                    }}
                   />
                 </div>
                 <div>
@@ -152,8 +207,22 @@ const LayoutPlanner: React.FC<LayoutPlannerProps> = ({
                   <input 
                     type="number" step="0.5"
                     className="w-full px-3 py-1 border rounded-lg text-sm"
-                    value={selectedObject.height}
-                    onChange={e => updateObject(selectedObject.id, { height: parseFloat(e.target.value) })}
+                    value={localEdit?.height ?? ''}
+                    onChange={e => {
+                      const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                      setLocalEdit(prev => ({ ...(prev || {}), height: val as any }));
+                      if (selectedObject) {
+                        if (editTimer.current) window.clearTimeout(editTimer.current);
+                        // @ts-ignore
+                        editTimer.current = window.setTimeout(() => {
+                          updateObject(selectedObject.id, { height: parseFloat(String(val)) });
+                          editTimer.current = null;
+                        }, 350);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (selectedObject && localEdit) updateObject(selectedObject.id, { height: Number(localEdit.height) });
+                    }}
                   />
                 </div>
               </div>
@@ -161,8 +230,12 @@ const LayoutPlanner: React.FC<LayoutPlannerProps> = ({
                 <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Assign to Member</label>
                 <select 
                   className="w-full px-3 py-1 border rounded-lg text-sm bg-white"
-                  value={selectedObject.ownerId || ''}
-                  onChange={e => updateObject(selectedObject.id, { ownerId: e.target.value || undefined })}
+                  value={localEdit?.ownerId || ''}
+                  onChange={e => {
+                    const val = e.target.value || undefined;
+                    setLocalEdit(prev => ({ ...(prev || {}), ownerId: val }));
+                    if (selectedObject) updateObject(selectedObject.id, { ownerId: val });
+                  }}
                 >
                   <option value="">Community Asset</option>
                   {allUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
@@ -172,9 +245,12 @@ const LayoutPlanner: React.FC<LayoutPlannerProps> = ({
                 {['#22c55e', '#14532d', '#3b82f6', '#ef4444', '#f59e0b', '#ec4899', '#64748b', '#1e293b'].map(c => (
                   <button 
                     key={c}
-                    className={`w-5 h-5 rounded-full border ${selectedObject.color === c ? 'ring-2 ring-emerald-500' : ''}`}
+                    className={`w-5 h-5 rounded-full border ${localEdit?.color === c ? 'ring-2 ring-emerald-500' : ''}`}
                     style={{ backgroundColor: c }}
-                    onClick={() => updateObject(selectedObject.id, { color: c })}
+                    onClick={() => {
+                      setLocalEdit(prev => ({ ...(prev || {}), color: c }));
+                      if (selectedObject) updateObject(selectedObject.id, { color: c });
+                    }}
                   />
                 ))}
               </div>

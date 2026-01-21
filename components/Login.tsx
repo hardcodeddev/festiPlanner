@@ -142,7 +142,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     <div className="min-h-screen flex items-center justify-center bg-emerald-900 p-4 font-sans">
       <div className="bg-white p-10 rounded-3xl shadow-2xl w-full max-w-md border border-emerald-800/20">
         <div className="text-center mb-10">
-          <h1 className="festival-font text-6xl text-emerald-700 mb-3 tracking-tighter">FESTIVAL</h1>
+          <h1 className="festival-font text-6xl text-emerald-700 mb-3 tracking-tighter">FestiPlanner</h1>
           <p className="text-slate-500 font-medium tracking-tight">Your camp, coordinated.</p>
         </div>
         {message && (

@@ -1,5 +1,15 @@
 import { supabase } from './supabaseClient';
 import { User, Camp } from './types';
+ 
+// Flag to suppress handling of the next realtime event caused by this client
+export const realtimeSuppression = {
+  flag: false,
+};
+
+export function markLocalUpdate(timeout = 1000) {
+  realtimeSuppression.flag = true;
+  setTimeout(() => { realtimeSuppression.flag = false; }, timeout);
+}
 
 // Helper to convert snake_case DB fields to camelCase TypeScript fields
 function dbToCamp(dbCamp: any): Camp {

@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, Camp, LocalState } from './types';
 import { getStore, generateId, clearStore } from './storage';
-import supabaseApi from './supabaseApi';
+import supabaseApi, { realtimeSuppression, markLocalUpdate } from './supabaseApi';
 import { supabase } from './supabaseClient';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
@@ -75,6 +75,10 @@ const App: React.FC = () => {
         },
         async (payload) => {
           console.log('🔄 Real-time camp change detected:', payload);
+          if (realtimeSuppression.flag) {
+            console.log('Ignoring realtime event caused by local update');
+            return;
+          }
           // Refetch camps for current user to get latest data
           try {
             const updatedCamps = await supabaseApi.fetchCampsForUser(state.currentUser!.id);
@@ -176,7 +180,7 @@ const App: React.FC = () => {
             className="flex items-center space-x-2 cursor-pointer group"
             onClick={() => setActiveCampId(null)}
           >
-            <span className="festival-font text-3xl tracking-wider group-hover:text-emerald-200 transition-colors">FESTIVAL</span>
+            <span className="festival-font text-3xl tracking-wider group-hover:text-emerald-200 transition-colors">FestiPlanner</span>
           </div>
           
           <div className="flex items-center space-x-5">
@@ -226,13 +230,24 @@ const App: React.FC = () => {
             user={state.currentUser}
             allUsers={state.users}
             onUpdateCamp={(updatedCamp) => {
-              setState(prev => ({
-                ...prev,
-                camps: prev.camps.map(c => c.id === updatedCamp.id ? updatedCamp : c)
-              }));
-              // persist update
-              supabaseApi.updateCamp(updatedCamp).catch(() => {});
-            }}
+                setState(prev => ({
+                  ...prev,
+                  camps: prev.camps.map(c => c.id === updatedCamp.id ? updatedCamp : c)
+                }));
+                // Debounce persistence per-camp to avoid rapid writes during dragging/typing
+                if (!(window as any).__campUpdateTimers) (window as any).__campUpdateTimers = {};
+                const timers = (window as any).__campUpdateTimers as Record<string, number>;
+                if (timers[updatedCamp.id]) window.clearTimeout(timers[updatedCamp.id]);
+                timers[updatedCamp.id] = window.setTimeout(async () => {
+                  try {
+                    markLocalUpdate(1200);
+                    await supabaseApi.updateCamp(updatedCamp);
+                  } catch (e) {
+                    console.warn('Failed to persist camp update', e);
+                  }
+                  delete timers[updatedCamp.id];
+                }, 600) as unknown as number;
+              }}
             personalItems={state.personalLists[state.currentUser.id]?.[activeCamp.id] || []}
             onUpdatePersonalItems={(items) => {
               setState(prev => ({
