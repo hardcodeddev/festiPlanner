@@ -117,7 +117,7 @@ export async function createInvitation(inviterId: string, email: string, campId?
       .eq('camp_id', campId)
       .maybeSingle();
     if (existing) {
-      const link = `${window.location.origin}/?invite=${existing.token}&email=${encodeURIComponent(email)}`;
+      const link = `https://hardcodeddev.github.io/festiPlanner/?invite=${existing.token}&email=${encodeURIComponent(email)}`;
       return { ...existing, link, emailSent: false, emailError: 'Invite already exists' };
     }
   }
@@ -129,7 +129,7 @@ export async function createInvitation(inviterId: string, email: string, campId?
     .single();
   if (error) throw error;
   // Return a simple invite link for the app; the app should accept token and email to claim membership.
-  const link = `${window.location.origin}/?invite=${data.token}&email=${encodeURIComponent(email)}`;
+  const link = `https://hardcodeddev.github.io/festiPlanner/?invite=${data.token}&email=${encodeURIComponent(email)}`;
   // Optionally send email via EmailJS (client-side friendly public key)
   let emailSent = false;
   let emailError: string | null = null;
