@@ -14,7 +14,7 @@ interface PackingListProps {
 }
 
 const PackingList: React.FC<PackingListProps> = ({ 
-  title, subtitle, items, currentUser, onUpdateItems, isShared 
+  title, subtitle, items = [], currentUser, onUpdateItems, isShared 
 }) => {
   const [newItemName, setNewItemName] = useState('');
   const [category, setCategory] = useState('General');

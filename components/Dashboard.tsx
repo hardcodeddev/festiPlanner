@@ -82,36 +82,54 @@ const Dashboard: React.FC<DashboardProps> = ({ camps, onCreateCamp, onSelectCamp
             <div 
               key={camp.id}
               onClick={() => onSelectCamp(camp.id)}
-              className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 hover:shadow-xl transition-all cursor-pointer group flex flex-col justify-between"
+              className="bg-white rounded-3xl shadow-sm border border-slate-100 hover:shadow-xl transition-all cursor-pointer group flex flex-col justify-between overflow-hidden"
             >
-              <div>
-                <div className="flex justify-between items-start mb-4">
-                  <div className="bg-emerald-100 text-emerald-600 p-3 rounded-2xl group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-                    <FiCalendar size={24} />
-                  </div>
-                  <div className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-xs font-bold flex items-center">
-                    <FiClock className="mr-1" /> {getDaysLeft(camp.date)} Days Left
-                  </div>
+              {/* Camp Image */}
+              {camp.imageUrl ? (
+                <div className="w-full h-40 overflow-hidden">
+                  <img 
+                    src={camp.imageUrl} 
+                    alt={camp.name}
+                    className="w-full h-40 object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
                 </div>
-                <h3 className="text-xl font-bold text-slate-800 mb-1">{camp.name}</h3>
-                <p className="text-slate-500 font-medium mb-4">{camp.festivalName}</p>
-              </div>
+              ) : (
+                <div className="w-full h-40 bg-gradient-to-br from-emerald-100 to-emerald-50 flex items-center justify-center group-hover:from-emerald-200 group-hover:to-emerald-100 transition-colors">
+                  <FiMapPin size={40} className="text-emerald-400" />
+                </div>
+              )}
               
-              <div className="flex items-center justify-between pt-4 border-t border-slate-50">
-                <div className="flex -space-x-2">
-                  {camp.members.map((_, i) => (
-                    <div key={i} className="w-8 h-8 rounded-full border-2 border-white bg-slate-200 flex items-center justify-center text-[10px] font-bold">
-                      U{i+1}
+              {/* Camp Info */}
+              <div className="p-6 flex flex-col justify-between flex-1">
+                <div>
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="bg-emerald-100 text-emerald-600 p-3 rounded-2xl group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                      <FiCalendar size={24} />
                     </div>
-                  ))}
-                  {camp.members.length > 5 && (
-                    <div className="w-8 h-8 rounded-full border-2 border-white bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-400">
-                      +{camp.members.length - 5}
+                    <div className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-xs font-bold flex items-center">
+                      <FiClock className="mr-1" /> {getDaysLeft(camp.date)} Days Left
                     </div>
-                  )}
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-800 mb-1">{camp.name}</h3>
+                  <p className="text-slate-500 font-medium mb-4">{camp.festivalName}</p>
                 </div>
-                <div className="text-slate-400 text-sm flex items-center">
-                  <FiUsers className="mr-1" /> {camp.members.length} members
+                
+                <div className="flex items-center justify-between pt-4 border-t border-slate-50">
+                  <div className="flex -space-x-2">
+                    {camp.members.map((_, i) => (
+                      <div key={i} className="w-8 h-8 rounded-full border-2 border-white bg-slate-200 flex items-center justify-center text-[10px] font-bold">
+                        U{i+1}
+                      </div>
+                    ))}
+                    {camp.members.length > 5 && (
+                      <div className="w-8 h-8 rounded-full border-2 border-white bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-400">
+                        +{camp.members.length - 5}
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-slate-400 text-sm flex items-center">
+                    <FiUsers className="mr-1" /> {camp.members.length} members
+                  </div>
                 </div>
               </div>
             </div>

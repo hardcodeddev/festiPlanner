@@ -1,6 +1,21 @@
 import { supabase } from './supabaseClient';
 import { User, Camp } from './types';
 
+// Helper to convert snake_case DB fields to camelCase TypeScript fields
+function dbToCamp(dbCamp: any): Camp {
+  return {
+    id: dbCamp.id,
+    name: dbCamp.name,
+    festivalName: dbCamp.festival_name,
+    date: dbCamp.date,
+    dimensions: dbCamp.dimensions,
+    members: dbCamp.members || [],
+    objects: dbCamp.objects || [],
+    sharedPackingList: dbCamp.shared_packing_list || [],
+    imageUrl: dbCamp.image_url,
+  };
+}
+
 export async function upsertProfile(user: User) {
   // Profiles table should have id = auth.users.id
   const { data, error } = await supabase
@@ -19,13 +34,37 @@ export async function fetchProfiles() {
 }
 
 export async function createCamp(camp: Camp) {
-  const { data, error } = await supabase.from('camps').insert(camp).select().single();
+  // Map camelCase to snake_case for Supabase columns
+  const dbCamp = {
+    id: camp.id,
+    name: camp.name,
+    festival_name: camp.festivalName,
+    date: camp.date,
+    dimensions: camp.dimensions,
+    members: camp.members,
+    objects: camp.objects,
+    shared_packing_list: camp.sharedPackingList,
+    image_url: camp.imageUrl,
+  };
+  const { data, error } = await supabase.from('camps').insert(dbCamp).select().single();
   if (error) throw error;
-  return data as Camp;
+  return dbToCamp(data) as Camp;
 }
 
 export async function updateCamp(camp: Camp) {
-  const { data, error } = await supabase.from('camps').update(camp).eq('id', camp.id).select().single();
+  // Map camelCase to snake_case for Supabase columns
+  const dbCamp = {
+    id: camp.id,
+    name: camp.name,
+    festival_name: camp.festivalName,
+    date: camp.date,
+    dimensions: camp.dimensions,
+    members: camp.members,
+    objects: camp.objects,
+    shared_packing_list: camp.sharedPackingList,
+    image_url: camp.imageUrl,
+  };
+  const { data, error } = await supabase.from('camps').update(dbCamp).eq('id', camp.id).select().single();
   if (error) throw error;
   return data as Camp;
 }
@@ -36,7 +75,28 @@ export async function fetchCampsForUser(userId: string) {
     .select('*')
     .contains('members', [userId]);
   if (error) throw error;
-  return data as Camp[];
+  // Map snake_case back to camelCase
+  return (data || []).map((c: any) => {
+    const packingList = Array.isArray(c.shared_packing_list) && c.shared_packing_list.length > 0 
+      ? c.shared_packing_list 
+      : [
+          { id: 'default-1', name: 'Main Canopy', quantity: 1, isPrivate: false, category: 'Logistics' },
+          { id: 'default-2', name: 'Large Cooler', quantity: 2, isPrivate: false, category: 'Kitchen' },
+          { id: 'default-3', name: 'First Aid Kit', quantity: 1, isPrivate: false, category: 'General' }
+        ];
+    console.log(`Camp ${c.id} (${c.name}) shared_packing_list:`, c.shared_packing_list, '→ Using:', packingList);
+    return {
+      id: c.id,
+      name: c.name,
+      festivalName: c.festival_name,
+      date: c.date,
+      dimensions: c.dimensions || { width: 30, height: 30 },
+      members: c.members || [],
+      objects: c.objects || [],
+      sharedPackingList: packingList,
+      imageUrl: c.image_url,
+    } as Camp;
+  });
 }
 
 export async function createInvitation(inviterId: string, email: string, campId?: string) {
@@ -59,30 +119,6 @@ export async function createInvitation(inviterId: string, email: string, campId?
     if (existing) {
       const link = `${window.location.origin}/?invite=${existing.token}&email=${encodeURIComponent(email)}`;
       return { ...existing, link, emailSent: false, emailError: 'Invite already exists' };
-    }
-  }
-
-  // Ensure camp exists before inserting invitation to satisfy FK constraint
-  if (campId) {
-    try {
-      const { data: campExists } = await supabase.from('camps').select('id').eq('id', campId).maybeSingle();
-      if (!campExists) {
-        // Create a minimal placeholder camp so the FK constraint is satisfied.
-        // Caller should normally create the camp via supabaseApi.createCamp; this is a graceful fallback.
-        const placeholder = {
-          id: campId,
-          name: 'Untitled Camp',
-          festival_name: '',
-          date: new Date().toISOString(),
-          dimensions: { width: 30, height: 30 },
-          members: [],
-          objects: [],
-          shared_packing_list: []
-        };
-        await supabase.from('camps').insert(placeholder).select();
-      }
-    } catch (e) {
-      console.warn('Failed to ensure camp exists before creating invitation', e);
     }
   }
 
@@ -163,7 +199,7 @@ export async function acceptInvitation(token: string, email: string, userId: str
   if (invite.camp_id) {
     const { data: campData, error: campErr } = await supabase
       .from('camps')
-      .select('members')
+      .select('*')
       .eq('id', invite.camp_id)
       .single();
     if (campErr) {

@@ -1,24 +1,106 @@
 
 import React, { useState, useEffect } from 'react';
 import { User, Camp, LocalState } from './types';
-import { getStore, saveStore, generateId } from './storage';
+import { getStore, generateId, clearStore } from './storage';
 import supabaseApi from './supabaseApi';
+import { supabase } from './supabaseClient';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import CampView from './components/CampView';
 import { FiLogOut, FiPlus, FiTrash2 } from 'react-icons/fi';
-import { clearStore } from './storage';
 
 const App: React.FC = () => {
   const [state, setState] = useState<LocalState>(getStore());
   const [activeCampId, setActiveCampId] = useState<string | null>(null);
 
+  // Restore session on app mount
   useEffect(() => {
-    saveStore(state);
-  }, [state]);
+    const restoreSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        
+        if (data.session?.user) {
+          const user = data.session.user;
+          const displayName = (user.user_metadata as any)?.full_name || user.email?.split('@')[0] || 'User';
+          const userData = { 
+            id: user.id, 
+            name: displayName, 
+            email: user.email || '' 
+          };
+          
+          // Restore session by loading remote data
+          try {
+            await supabaseApi.upsertProfile(userData);
+            const remoteCamps = await supabaseApi.fetchCampsForUser(user.id);
+            const profiles = await supabaseApi.fetchProfiles();
+            setState(prev => ({
+              ...prev,
+              currentUser: userData,
+              users: (profiles || []).map((p: any) => ({ id: p.id, name: p.full_name, email: p.email })),
+              camps: Array.isArray(remoteCamps) ? remoteCamps : [],
+            }));
+            clearStore();
+          } catch (err) {
+            console.warn('Failed to load remote data during session restore:', err);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to restore session:', err);
+      }
+    };
+
+    restoreSession();
+  }, []);
+
+  // Subscribe to real-time camp updates
+  useEffect(() => {
+    if (!state.currentUser) return;
+
+    console.log('Setting up real-time subscription for user:', state.currentUser.id);
+    
+    const channel = supabase
+      .channel(`camps-${state.currentUser.id}`, {
+        config: {
+          broadcast: { self: true },
+          presence: { key: state.currentUser.id },
+        },
+      })
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Listen to INSERT, UPDATE, DELETE
+          schema: 'public',
+          table: 'camps',
+        },
+        async (payload) => {
+          console.log('🔄 Real-time camp change detected:', payload);
+          // Refetch camps for current user to get latest data
+          try {
+            const updatedCamps = await supabaseApi.fetchCampsForUser(state.currentUser!.id);
+            console.log('✅ Camps refetched:', updatedCamps.length, 'camps');
+            setState(prev => ({
+              ...prev,
+              camps: Array.isArray(updatedCamps) ? updatedCamps : prev.camps
+            }));
+          } catch (err) {
+            console.warn('❌ Failed to refetch camps on real-time update:', err);
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('Real-time subscription status:', status);
+      });
+
+    // Cleanup subscription on unmount or when user changes
+    return () => {
+      console.log('Cleaning up real-time subscription for user:', state.currentUser.id);
+      supabase.removeChannel(channel);
+    };
+  }, [state.currentUser?.id]);
 
   const handleLogin = (user: User) => {
-    // Persist profile and load remote data
+    // Load remote data from Supabase (single source of truth)
     (async () => {
       try {
         await supabaseApi.upsertProfile(user);
@@ -32,6 +114,8 @@ const App: React.FC = () => {
           // Always replace camps with remote results (even if empty) to avoid stale local camps
           camps: Array.isArray(remoteCamps) ? remoteCamps : [],
         }));
+        // Clear localStorage after successful remote data fetch
+        clearStore();
       } catch (err) {
         // Fallback to local-only behavior
         setState(prev => ({ 
@@ -46,9 +130,10 @@ const App: React.FC = () => {
   const handleLogout = () => {
     setState(prev => ({ ...prev, currentUser: null }));
     setActiveCampId(null);
+    clearStore();
   };
 
-  const createCamp = (name: string, festival: string, date: string) => {
+  const createCamp = async (name: string, festival: string, date: string) => {
     if (!state.currentUser) return;
     const newCamp: Camp = {
       id: generateId(),
@@ -58,6 +143,7 @@ const App: React.FC = () => {
       dimensions: { width: 30, height: 30 }, // Default 30ft x 30ft
       members: [state.currentUser.id],
       objects: [],
+      imageUrl: undefined,
       sharedPackingList: [
         { id: generateId(), name: 'Main Canopy', quantity: 1, isPrivate: false, category: 'Logistics' },
         { id: generateId(), name: 'Large Cooler', quantity: 2, isPrivate: false, category: 'Kitchen' },
@@ -65,8 +151,14 @@ const App: React.FC = () => {
       ]
     };
     setState(prev => ({ ...prev, camps: [...prev.camps, newCamp] }));
-    // Persist to Supabase (fire and forget)
-    supabaseApi.createCamp(newCamp).catch(() => {/* ignore for now */});
+    // Persist to Supabase and log errors
+    try {
+      await supabaseApi.createCamp(newCamp);
+      console.log('Camp saved to Supabase:', newCamp.id);
+    } catch (err) {
+      console.error('Failed to save camp to Supabase:', err);
+      alert('Failed to save camp to Supabase. Check console for details.');
+    }
   };
 
   if (!state.currentUser) {
