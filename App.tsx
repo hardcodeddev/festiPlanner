@@ -31,6 +31,21 @@ const App: React.FC = () => {
           
           // Restore session by loading remote data
           try {
+            // First, check if the profile still exists
+            const { data: existingProfile, error: fetchErr } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', user.id)
+              .single();
+
+            // If profile was deleted, sign out the user
+            if (fetchErr && fetchErr.code === 'PGRST116') {
+              console.warn('User profile was deleted, signing out');
+              await supabase.auth.signOut();
+              return;
+            }
+
+            // Otherwise proceed with restoring session
             await supabaseApi.upsertProfile(userData);
             const remoteCamps = await supabaseApi.fetchCampsForUser(user.id);
             const profiles = await supabaseApi.fetchProfiles();
